@@ -2,6 +2,7 @@
 
 from datetime import date, datetime
 from dotenv import load_dotenv
+from typing import Any
 
 import json
 import os
@@ -10,10 +11,10 @@ import requests
 import sys
 import time
 
-TIMEOUT = 10
+TIMEOUT_IN_SECONDS = 10
 
-def log_stderr(str):
-    print(str, file=sys.stderr)
+def log_stderr(msg: str) -> None:
+    print(msg, file=sys.stderr)
 
 def merge_places(src, dst, clock):
     def call_place_details_essential(api_key, id):
@@ -22,7 +23,7 @@ def merge_places(src, dst, clock):
         try:
             time.sleep(0.1)
 
-            response = requests.get(url, timeout=TIMEOUT)
+            response = requests.get(url, timeout=TIMEOUT_IN_SECONDS)
             if response.status_code != 404:
                 response.raise_for_status()
 
@@ -41,7 +42,7 @@ def merge_places(src, dst, clock):
                 "X-Goog-FieldMask": "displayName,formattedAddress",
             }
 
-            response = requests.get(url, headers=headers, timeout=TIMEOUT)
+            response = requests.get(url, headers=headers, timeout=TIMEOUT_IN_SECONDS)
             response.raise_for_status()
 
             data = response.json()
@@ -59,7 +60,7 @@ def merge_places(src, dst, clock):
                 "X-Goog-FieldMask": "results.placeId,results.location",
             }
 
-            response = requests.get(url, headers=headers, timeout=TIMEOUT)
+            response = requests.get(url, headers=headers, timeout=TIMEOUT_IN_SECONDS)
             response.raise_for_status()
 
             elems = response.json()["results"]
@@ -153,7 +154,7 @@ def parse_timeline(filename):
     return timeline
 
 if __name__ == "__main__":
-    def json_serial(obj):
+    def json_serial(obj: Any) -> str:
         if isinstance(obj, (date, datetime,)):
             return obj.isoformat()
 
