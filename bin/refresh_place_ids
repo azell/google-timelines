@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from dotenv import load_dotenv
 from typing import Any
@@ -13,10 +14,22 @@ import time
 
 TIMEOUT_IN_SECONDS = 10
 
+@dataclass
+class Place:
+    address: str
+    lat_lng: str
+    name: str
+    updated_at: datetime
+    valid_id: str
+
+    def __post_init__(self):
+        if isinstance(self.updated_at, str):
+            self.updated_at = datetime.fromisoformat(self.updated_at)
+
 def log_stderr(msg: str) -> None:
     print(msg, file=sys.stderr)
 
-def merge_places(src: dict[str, str], dst: Any, clock: datetime) -> None:
+def merge_places(src: dict[str, str], dst: dict[str, Place], clock: datetime) -> None:
     def call_place_details_essential(api_key: str, id: str) -> Any:
         data, url = {}, f"https://places.googleapis.com/v1/places/{id}?fields=id&key={api_key}"
 
@@ -82,11 +95,7 @@ def merge_places(src: dict[str, str], dst: Any, clock: datetime) -> None:
         if not place:
             return False
 
-        dt = datetime.fromisoformat(place["updated_at"])
-        if (clock - dt).days > 365:
-            return False
-
-        return True
+        return True if (clock - place.updated_at).days <= 365 else False
 
     api_key = os.environ["GOOGLE_MAPS_API_KEY"]
     lhs, rhs = 0, len(src)
@@ -115,13 +124,13 @@ def merge_places(src: dict[str, str], dst: Any, clock: datetime) -> None:
         if not info:
             continue
 
-        dst[id] = {
-            "address": info.get("formattedAddress", ""),
-            "lat_lng": data.get("lat_lng", lat_lng),
-            "name": info["displayName"]["text"],
-            "updated_at": datetime.now(),
-            "valid_id": valid_id,
-        }
+        dst[id] = Place(
+            address=info.get("formattedAddress", ""),
+            lat_lng=data.get("lat_lng", lat_lng),
+            name=info["displayName"]["text"],
+            updated_at=datetime.now(),
+            valid_id=valid_id,
+        )
 
     if (lhs % 10) != 0:
         log_stderr(f"{datetime.now()} processing {lhs}/{rhs}")
@@ -129,6 +138,9 @@ def merge_places(src: dict[str, str], dst: Any, clock: datetime) -> None:
 def parse_file(filename: str) -> Any:
     with open(filename, "r") as fd:
         return json.load(fd)
+
+def parse_places(filename: str) -> dict[str, Place]:
+    return { key: Place(**value) for key, value in parse_file(filename).items() }
 
 def parse_timeline(filename: str) -> dict[str, str]:
     def map(data: dict[str, Any]) -> tuple[str, str] | tuple[()]:
@@ -154,7 +166,9 @@ def parse_timeline(filename: str) -> dict[str, str]:
     return timeline
 
 if __name__ == "__main__":
-    def json_serial(obj: Any) -> str:
+    def json_serial(obj: Any) -> Any:
+        if isinstance(obj, Place):
+            return asdict(obj)
         if isinstance(obj, (date, datetime,)):
             return obj.isoformat()
 
@@ -167,7 +181,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     timeline = parse_timeline(sys.argv[1])
-    places = parse_file(sys.argv[2])
+    places = parse_places(sys.argv[2])
 
     merge_places(timeline, places, datetime.now())
     json.dump(places, sys.stdout, default=json_serial, indent=4, sort_keys=True)
