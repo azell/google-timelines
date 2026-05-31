@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from itertools import batched
 from pathlib import Path
+from typing import Any, Iterable
 
 import csv
 import json
 import sys
 
-def export_files(output, prefix, rows, chunk=2_000):
-    def next_chunk(batch, idx):
+def export_files(output: Path, prefix: str, rows: list[list[Any]], chunk:int=2_000) -> None:
+    def next_chunk(batch: Iterable[list[Any]], idx: int):
         filename = output / f"{prefix}-{idx:03d}.csv"
 
         header = [
@@ -37,10 +38,10 @@ def export_files(output, prefix, rows, chunk=2_000):
         idx += 1
         next_chunk(batch, idx)
 
-def log_stderr(str):
-    print(str, file=sys.stderr)
+def log_stderr(msg: str) -> None:
+    print(msg, file=sys.stderr)
 
-def merge_places(src, dst, func=lambda *args, **kwargs: True):
+def merge_places(src: dict[str, Any], dst: Any, func=lambda *args, **kwargs: True) -> list[list[Any]]:
     rows = []
 
     for visit in src.values():
@@ -63,12 +64,12 @@ def merge_places(src, dst, func=lambda *args, **kwargs: True):
 
     return rows
 
-def parse_file(filename):
+def parse_file(filename: str) -> Any:
     with open(filename, "r") as fd:
         return json.load(fd)
 
-def parse_timeline(filename):
-    def evict(data):
+def parse_timeline(filename: str) -> dict[str, Any]:
+    def evict(data: dict[str, Any]) -> dict[str, Any]:
         evicted_ids, visits = [], {}
 
         for visit in data.values():
@@ -88,7 +89,7 @@ def parse_timeline(filename):
 
         return data
 
-    def map(data):
+    def map(data: dict[str, Any]) -> dict[str, Any]:
         visit = data.get("visit")
         if not visit:
             return {}
@@ -123,12 +124,12 @@ def parse_timeline(filename):
     return evict(timeline)
 
 if __name__ == "__main__":
-    def in_hawaii(place, visit):
+    def in_hawaii(place: dict[str, str], _visit) -> bool:
         lat, lng = map(lambda x: Decimal(x), place["lat_lng"].split(","))
 
         return 18.9 <= lat <= 28.5 and -160.5 <= lng <= -154.8
 
-    def json_serial(obj):
+    def json_serial(obj: Any) -> str:
         if isinstance(obj, (date, datetime,)):
             return obj.isoformat()
 
