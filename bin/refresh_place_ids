@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+
+from datetime import date, datetime
+from dotenv import load_dotenv
+
+import json
+import os
+import re
+import requests
+import sys
+import time
+
+TIMEOUT = 10
+
+def log_stderr(str):
+    print(str, file=sys.stderr)
+
+def merge_places(src, dst, clock):
+    def call_place_details_essential(api_key, id):
+        data, url = {}, f"https://places.googleapis.com/v1/places/{id}?fields=id&key={api_key}"
+
+        try:
+            time.sleep(0.1)
+
+            response = requests.get(url, timeout=TIMEOUT)
+            if response.status_code != 404:
+                response.raise_for_status()
+
+            data = response.json()
+        except requests.exceptions.RequestException as e:
+            log_stderr(f"An error occurred: {e}")
+
+        return data
+
+    def call_place_details_pro(api_key, id):
+        data, url = {}, f"https://places.googleapis.com/v1/places/{id}"
+
+        try:
+            headers = {
+                "X-Goog-Api-Key": api_key,
+                "X-Goog-FieldMask": "displayName,formattedAddress",
+            }
+
+            response = requests.get(url, headers=headers, timeout=TIMEOUT)
+            response.raise_for_status()
+
+            data = response.json()
+        except requests.exceptions.RequestException as e:
+            log_stderr(f"An error occurred: {e}")
+
+        return data
+
+    def call_reverse_geocoder(api_key, lat_lng):
+        data, url = {}, f"https://geocode.googleapis.com/v4/geocode/location/{lat_lng}"
+
+        try:
+            headers = {
+                "X-Goog-Api-Key": api_key,
+                "X-Goog-FieldMask": "results.placeId,results.location",
+            }
+
+            response = requests.get(url, headers=headers, timeout=TIMEOUT)
+            response.raise_for_status()
+
+            elems = response.json()["results"]
+            if elems:
+                elem = elems[0]
+                loc = elem["location"]
+
+                data = {
+                    "id": elem["placeId"],
+                    "lat_lng": f"{loc['latitude']},{loc['longitude']}",
+                }
+        except requests.exceptions.RequestException as e:
+            log_stderr(f"An error occurred: {e}")
+
+        return data
+
+    def is_valid(id):
+        place = dst.get(id)
+        if not place:
+            return False
+
+        dt = datetime.fromisoformat(place["updated_at"])
+        if (clock - dt).days > 365:
+            return False
+
+        return True
+
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    lhs, rhs = 0, len(src)
+
+    for id, lat_lng in src.items():
+        lhs += 1
+        if (lhs % 10) == 0:
+            log_stderr(f"{datetime.now()} processing {lhs}/{rhs}")
+
+        if is_valid(id):
+            continue
+
+        data = call_place_details_essential(api_key, id)
+        if not data:
+            continue
+
+        if "error" in data:
+            log_stderr(f"{id}: {data['error']['status']}")
+            data = call_reverse_geocoder(api_key, lat_lng)
+
+        valid_id = data.get("id")
+        if not valid_id:
+            continue
+
+        info = call_place_details_pro(api_key, valid_id)
+        if not info:
+            continue
+
+        dst[id] = {
+            "address": info.get("formattedAddress", ""),
+            "lat_lng": data.get("lat_lng", lat_lng),
+            "name": info["displayName"]["text"],
+            "updated_at": datetime.now(),
+            "valid_id": valid_id,
+        }
+
+    if (lhs % 10) != 0:
+        log_stderr(f"{datetime.now()} processing {lhs}/{rhs}")
+
+def parse_file(filename):
+    with open(filename, "r") as fd:
+        return json.load(fd)
+
+def parse_timeline(filename):
+    def map(data):
+        visit = data.get("visit")
+        if not visit:
+            return ()
+
+        top = visit.get("topCandidate")
+        if not top:
+            return ()
+
+        return top["placeId"], re.sub(r"[°\s]", "", top["placeLocation"]["latLng"])
+
+    data, timeline = parse_file(filename), {}
+
+    for segment in data["semanticSegments"]:
+        visit = map(segment)
+        if not visit:
+            continue
+
+        timeline[visit[0]] = visit[1]
+
+    return timeline
+
+if __name__ == "__main__":
+    def json_serial(obj):
+        if isinstance(obj, (date, datetime,)):
+            return obj.isoformat()
+
+        raise TypeError(f"Type {type(obj)} not serializable")
+
+    load_dotenv()
+
+    if len(sys.argv) != 3:
+        log_stderr(f"usage: {sys.argv[0]} <timeline> <places>")
+        sys.exit(1)
+
+    timeline = parse_timeline(sys.argv[1])
+    places = parse_file(sys.argv[2])
+
+    merge_places(timeline, places, datetime.now())
+    json.dump(places, sys.stdout, default=json_serial, indent=4, sort_keys=True)

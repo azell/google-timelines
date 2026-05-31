@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+
+from datetime import datetime
+from decimal import Decimal
+from itertools import batched
+from pathlib import Path
+
+import csv
+import json
+import sys
+
+def export_files(output, prefix, rows, chunk=2_000):
+    def next_chunk(batch, idx):
+        filename = output / f"{prefix}-{idx:03d}.csv"
+
+        header = [
+            "Name",
+            "Count",
+            "Address",
+            "Latitude",
+            "Longitude",
+            "Start Time",
+            "Duration",
+            "PlaceId",
+        ]
+
+        with open(filename, "w", newline="") as fd:
+            writer = csv.writer(fd, quoting=csv.QUOTE_ALL)
+            writer.writerow(header)
+            writer.writerows(batch)
+
+    output.mkdir(exist_ok=True, parents=True)
+
+    idx = -1
+
+    for batch in batched(rows, chunk):
+        idx += 1
+        next_chunk(batch, idx)
+
+def log_stderr(str):
+    print(str, file=sys.stderr)
+
+def merge_places(src, dst, func=lambda *args, **kwargs: True):
+    rows = []
+
+    for visit in src.values():
+        place = dst[visit["id"]]
+        if not func(place, visit):
+            continue
+
+        start_time = datetime.fromisoformat(visit["start_time"])
+        end_time = datetime.fromisoformat(visit["end_time"])
+
+        rows.append([
+            place["name"],
+            visit["count"],
+            place["address"],
+            *place["lat_lng"].split(","),
+            start_time.strftime("%Y/%m/%d %I:%M:%S %p"),
+            end_time - start_time,
+            place["valid_id"],
+        ])
+
+    return rows
+
+def parse_file(filename):
+    with open(filename, "r") as fd:
+        return json.load(fd)
+
+def parse_timeline(filename):
+    def evict(data):
+        evicted_ids, visits = [], {}
+
+        for visit in data.values():
+            start_time = visit["start_time"]
+            prev_visit = visits.get(start_time)
+
+            if not prev_visit:
+                visits[start_time] = visit
+            elif prev_visit["probability"] > visit["probability"]:
+                evicted_ids.append(visit["id"])
+            else:
+                visits[start_time] = visit
+                evicted_ids.append(prev_visit["id"])
+
+        for id in evicted_ids:
+            data.pop(id)
+
+        return data
+
+    def map(data):
+        visit = data.get("visit")
+        if not visit:
+            return {}
+
+        top = visit.get("topCandidate")
+        if not top:
+            return {}
+
+        return {
+            "count": 1,
+            "end_time": data["endTime"],
+            "id": top["placeId"],
+            "probability": top["probability"],
+            "start_time": data["startTime"],
+        }
+
+    data, timeline = parse_file(filename), {}
+
+    for segment in data["semanticSegments"]:
+        visit = map(segment)
+        if not visit:
+            continue
+
+        id = visit["id"]
+
+        prev_visit = timeline.pop(id, {})
+        if prev_visit:
+            visit["count"] += prev_visit["count"]
+
+        timeline[id] = visit
+
+    return evict(timeline)
+
+if __name__ == "__main__":
+    def in_hawaii(place, visit):
+        lat, lng = map(lambda x: Decimal(x), place["lat_lng"].split(","))
+
+        return 18.9 <= lat <= 28.5 and -160.5 <= lng <= -154.8
+
+    def json_serial(obj):
+        if isinstance(obj, (date, datetime,)):
+            return obj.isoformat()
+
+        raise TypeError(f"Type {type(obj)} not serializable")
+
+    if len(sys.argv) != 4:
+        log_stderr(f"usage: {sys.argv[0]} <timeline> <places> <output_dir>")
+        sys.exit(1)
+
+    timeline = parse_timeline(sys.argv[1])
+    places = parse_file(sys.argv[2])
+    output = Path(sys.argv[3])
+
+    rows = merge_places(timeline, places)
+    export_files(output, "all", rows)
+
+    rows = merge_places(timeline, places, in_hawaii)
+    export_files(output, "hawaii", rows)
+
+    year = datetime.now().year
+    rows = merge_places(timeline, places, lambda _, v: v["start_time"].startswith(f"{year}-"))
+    export_files(output, str(year), rows)
