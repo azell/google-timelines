@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from itertools import batched
@@ -9,6 +10,18 @@ from typing import Any, Iterable
 import csv
 import json
 import sys
+
+@dataclass
+class Place:
+    address: str
+    lat_lng: str
+    name: str
+    updated_at: datetime
+    valid_id: str
+
+    def __post_init__(self):
+        if isinstance(self.updated_at, str):
+            self.updated_at = datetime.fromisoformat(self.updated_at)
 
 def export_files(output: Path, prefix: str, rows: list[list[Any]], chunk:int=2_000) -> None:
     def next_chunk(batch: Iterable[list[Any]], idx: int):
@@ -41,7 +54,7 @@ def export_files(output: Path, prefix: str, rows: list[list[Any]], chunk:int=2_0
 def log_stderr(msg: str) -> None:
     print(msg, file=sys.stderr)
 
-def merge_places(src: dict[str, Any], dst: Any, func=lambda *args, **kwargs: True) -> list[list[Any]]:
+def merge_places(src: dict[str, Any], dst: dict[str, Place], func=lambda *args, **kwargs: True) -> list[list[Any]]:
     rows = []
 
     for visit in src.values():
@@ -53,13 +66,13 @@ def merge_places(src: dict[str, Any], dst: Any, func=lambda *args, **kwargs: Tru
         end_time = datetime.fromisoformat(visit["end_time"])
 
         rows.append([
-            place["name"],
+            place.name,
             visit["count"],
-            place["address"],
-            *place["lat_lng"].split(","),
+            place.address,
+            *place.lat_lng.split(","),
             start_time.strftime("%Y/%m/%d %I:%M:%S %p"),
             end_time - start_time,
-            place["valid_id"],
+            place.valid_id,
         ])
 
     return rows
@@ -67,6 +80,9 @@ def merge_places(src: dict[str, Any], dst: Any, func=lambda *args, **kwargs: Tru
 def parse_file(filename: str) -> Any:
     with open(filename, "r") as fd:
         return json.load(fd)
+
+def parse_places(filename: str) -> dict[str, Place]:
+    return { key: Place(**value) for key, value in parse_file(filename).items() }
 
 def parse_timeline(filename: str) -> dict[str, Any]:
     def evict(data: dict[str, Any]) -> dict[str, Any]:
@@ -124,8 +140,8 @@ def parse_timeline(filename: str) -> dict[str, Any]:
     return evict(timeline)
 
 if __name__ == "__main__":
-    def in_hawaii(place: dict[str, str], _visit) -> bool:
-        lat, lng = map(lambda x: Decimal(x), place["lat_lng"].split(","))
+    def in_hawaii(place: Place, _visit) -> bool:
+        lat, lng = map(lambda x: Decimal(x), place.lat_lng.split(","))
 
         return 18.9 <= lat <= 28.5 and -160.5 <= lng <= -154.8
 
@@ -140,7 +156,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     timeline = parse_timeline(sys.argv[1])
-    places = parse_file(sys.argv[2])
+    places = parse_places(sys.argv[2])
     output = Path(sys.argv[3])
 
     rows = merge_places(timeline, places)
