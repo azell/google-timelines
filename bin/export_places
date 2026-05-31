@@ -23,6 +23,9 @@ class Place:
         if isinstance(self.updated_at, str):
             self.updated_at = datetime.fromisoformat(self.updated_at)
 
+    def coordinates(self) -> list[str]:
+        return self.lat_lng.split(",")
+
 def export_files(output: Path, prefix: str, rows: list[list[Any]], chunk:int=2_000) -> None:
     def next_chunk(batch: Iterable[list[Any]], idx: int):
         filename = output / f"{prefix}-{idx:03d}.csv"
@@ -69,7 +72,7 @@ def merge_places(src: dict[str, Any], dst: dict[str, Place], func=lambda *args, 
             place.name,
             visit["count"],
             place.address,
-            *place.lat_lng.split(","),
+            *place.coordinates(),
             start_time.strftime("%Y/%m/%d %I:%M:%S %p"),
             end_time - start_time,
             place.valid_id,
@@ -141,7 +144,7 @@ def parse_timeline(filename: str) -> dict[str, Any]:
 
 if __name__ == "__main__":
     def in_hawaii(place: Place, _visit) -> bool:
-        lat, lng = map(lambda x: Decimal(x), place.lat_lng.split(","))
+        lat, lng = map(lambda x: Decimal(x), place.coordinates())
 
         return 18.9 <= lat <= 28.5 and -160.5 <= lng <= -154.8
 
