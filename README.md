@@ -29,6 +29,10 @@ Copy your **Timeline.json** file into the `timelines` directory.
 uv sync
 ```
 
+## Export a Google Maps API key
+
+Either export **GOOGLE_MAPS_API_KEY** directly using setenv, or use a `.env` file.
+
 ## Cache the latest place metadata
 
 Place IDs contained in the timeline file may be outdated. The Google Places API supports
